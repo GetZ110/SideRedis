@@ -23,22 +23,29 @@ class InfoPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setAlignment(Qt.AlignTop)
-        layout.addWidget(scroll)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setAlignment(Qt.AlignTop)
+        layout.addWidget(self.scroll)
 
         self.content_widget = QWidget()
-        scroll.setWidget(self.content_widget)
+        self.scroll.setWidget(self.content_widget)
 
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setAlignment(Qt.AlignTop)
 
     def refresh(self):
-        while self.content_layout.count():
-            item = self.content_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        # Clear content by recreating widget
+        old_widget = self.content_widget
+        self.content_widget = QWidget()
+        self.scroll.setWidget(self.content_widget)
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setAlignment(Qt.AlignTop)
+        try:
+            if old_widget:
+                old_widget.deleteLater()
+        except RuntimeError:
+            pass
 
         if not redis_manager.connected:
             label = QLabel("Not connected")

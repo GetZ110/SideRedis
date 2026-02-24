@@ -143,6 +143,7 @@ class KeysBrowser(QWidget):
         options_layout.setSpacing(8)
 
         self.exact_checkbox = QCheckBox("Exact")
+        self.exact_checkbox.setToolTip("Treat input as exact key name instead of pattern")
         self.exact_checkbox.stateChanged.connect(self._on_exact_changed)
         options_layout.addWidget(self.exact_checkbox)
         options_layout.addSpacing(20)
@@ -185,10 +186,16 @@ class KeysBrowser(QWidget):
         layout.addLayout(button_layout)
 
     def _on_exact_changed(self, state):
-        self._exact_search = state == Qt.Checked
+        self._exact_search = (state == 2)  # Qt.Checked = 2
 
     def _search(self):
         raw = self.pattern_input.text().strip()
+        if self._exact_search and raw:
+            # Exact mode: try to read the key directly
+            self._try_exact_key(raw)
+            return
+
+        # Pattern mode: normal search
         is_default = raw in ("", "*")
         self.pattern = raw or "*"
         self.cursor = 0
@@ -196,6 +203,41 @@ class KeysBrowser(QWidget):
         self._prefix_tree = _PrefixTree()
         self._is_search_mode = not is_default
         self._load_keys()
+
+    def _try_exact_key(self, key_name: str):
+        """Try to read a key by exact name, testing all data types."""
+        if not redis_manager.connected:
+            return
+
+        self.cursor = 0
+        self._key_set = set()
+        self._prefix_tree = _PrefixTree()
+
+        # Try to get the key type
+        try:
+            key_type = redis_manager.get_key_type(key_name)
+            # If key exists, add it to the tree
+            if key_type != "none":
+                self._key_set.add(key_name)
+                self._prefix_tree.insert(key_name.split(SEPARATOR))
+                self._prefix_tree.recount()
+                self._update_tree()
+
+                db_size = redis_manager.get_db_size()
+                total = len(self._key_set)
+                self.count_label.setText(f"Found: {total} key(s)")
+                self.more_btn.setVisible(False)
+                self.load_all_btn.setVisible(False)
+            else:
+                self.count_label.setText("Key not found")
+                self._update_tree()
+                self.more_btn.setVisible(False)
+                self.load_all_btn.setVisible(False)
+        except Exception as e:
+            self.count_label.setText(f"Error: {e}")
+            self._update_tree()
+            self.more_btn.setVisible(False)
+            self.load_all_btn.setVisible(False)
 
     def _refresh(self):
         self.cursor = 0
@@ -224,10 +266,8 @@ class KeysBrowser(QWidget):
         import threading
 
         def load_all_thread():
-            loaded = 0
             cursor = 0
             total_loaded = 0
-            batch_size = 500  # Increase batch size to reduce UI updates
 
             while True:
                 cursor, keys = redis_manager.scan_keys(
@@ -240,18 +280,12 @@ class KeysBrowser(QWidget):
                         with self._tree_lock:
                             self._key_set.add(key)
                             self._prefix_tree.insert(key.split(SEPARATOR))
-                    loaded += 1
                     total_loaded += 1
-
-                    # Update UI every 500 keys instead of 100
-                    if loaded >= batch_size:
-                        loaded = 0
-                        self.update_tree_signal.emit(total_loaded)
 
                 if cursor == 0:
                     break
 
-            # Emit finish signal when done
+            # Emit finish signal when done - this will update the tree once
             self.finish_load_signal.emit(total_loaded)
 
         thread = threading.Thread(target=load_all_thread, daemon=True)
